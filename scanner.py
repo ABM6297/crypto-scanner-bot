@@ -10,27 +10,17 @@ CHAT_ID = os.getenv("TG_CHAT_ID")
 CMC_API_KEY = os.getenv("CMC_API_KEY")
 
 TOP_LIMIT = 100
+INITIAL_BALANCE = 1000
 
-# ---------------------------
-# AI WEIGHTS (adaptive)
-# ---------------------------
-weights = {
-    "rsi": 1.0,
-    "macd": 1.0,
-    "trend": 1.0
-}
+balance = INITIAL_BALANCE
 
-# pseudo performance memory (simple learning)
-performance = {
-    "wins": 0,
-    "losses": 0
-}
 
 # ---------------------------
 # GET TOP COINS
 # ---------------------------
 def get_top_coins():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
+
     headers = {"X-CMC_PRO_API_KEY": CMC_API_KEY}
     params = {"start": 1, "limit": TOP_LIMIT, "convert": "USD"}
 
@@ -44,10 +34,10 @@ def get_top_coins():
 
 
 # ---------------------------
-# GET DATA
+# MARKET DATA
 # ---------------------------
 def get_data(symbol):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=5m&limit=100"
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=5m&limit=120"
     r = requests.get(url)
     data = r.json()
 
@@ -57,91 +47,134 @@ def get_data(symbol):
     df = pd.DataFrame(data)
     df = df.iloc[:, :6]
     df.columns = ["time", "open", "high", "low", "close", "volume"]
+
     df["close"] = df["close"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
 
     return df
 
 
 # ---------------------------
-# AI ANALYSIS ENGINE
+# MARKET REGIME DETECTION
 # ---------------------------
-def analyze(df):
+def market_regime(df):
 
-    df["rsi"] = ta.momentum.RSIIndicator(df["close"], 14).rsi()
+    ma20 = df["close"].rolling(20).mean()
+    ma50 = df["close"].rolling(50).mean()
+
+    trend_strength = abs(ma20.iloc[-1] - ma50.iloc[-1])
+
+    atr = (df["high"] - df["low"]).rolling(14).mean().iloc[-1]
+
+    if trend_strength > atr:
+        return "TREND"
+    elif atr > trend_strength * 1.5:
+        return "VOLATILE"
+    else:
+        return "RANGE"
+
+
+# ---------------------------
+# FEATURE ENGINEERING
+# ---------------------------
+def score_signal(df):
+
+    rsi = ta.momentum.RSIIndicator(df["close"], 14).rsi().iloc[-1]
+
     macd = ta.trend.MACD(df["close"])
-    df["macd"] = macd.macd()
-    df["signal"] = macd.macd_signal()
+    macd_val = macd.macd().iloc[-1]
+    macd_sig = macd.macd_signal().iloc[-1]
 
-    last = df.iloc[-1]
-    price = last["close"]
+    price = df["close"].iloc[-1]
+    ma20 = df["close"].rolling(20).mean().iloc[-1]
 
     score = 0
 
     # RSI logic
-    if last["rsi"] < 30:
-        score += 30 * weights["rsi"]
-    elif last["rsi"] > 70:
-        score -= 30 * weights["rsi"]
+    if rsi < 30:
+        score += 2
+    elif rsi > 70:
+        score -= 2
 
     # MACD logic
-    if last["macd"] > last["signal"]:
-        score += 25 * weights["macd"]
+    if macd_val > macd_sig:
+        score += 2
     else:
-        score -= 25 * weights["macd"]
+        score -= 2
 
-    # trend filter (simple)
-    ma = df["close"].rolling(20).mean().iloc[-1]
-    if price > ma:
-        score += 15 * weights["trend"]
+    # trend logic
+    if price > ma20:
+        score += 1
     else:
-        score -= 15 * weights["trend"]
+        score -= 1
+
+    return score, rsi
+
+
+# ---------------------------
+# ATR RISK MODEL
+# ---------------------------
+def atr(df):
+    tr = pd.concat([
+        df["high"] - df["low"],
+        abs(df["high"] - df["close"].shift()),
+        abs(df["low"] - df["close"].shift())
+    ], axis=1).max(axis=1)
+
+    return tr.rolling(14).mean().iloc[-1]
+
+
+# ---------------------------
+# ANALYZE
+# ---------------------------
+def analyze(df, symbol):
+
+    regime = market_regime(df)
+    score, rsi = score_signal(df)
+
+    price = df["close"].iloc[-1]
 
     direction = None
 
-    if score >= 40:
+    if score >= 3:
         direction = "BUY"
-    elif score <= -40:
+    elif score <= -3:
         direction = "SELL"
 
     if not direction:
         return None
 
-    # risk management
-    sl = price * (0.985 if direction == "BUY" else 1.015)
-    tp = price * (1.03 if direction == "BUY" else 0.97)
+    a = atr(df)
+
+    # adaptive risk based on regime
+    if regime == "TREND":
+        sl_mult, tp_mult = 1.5, 3.0
+    elif regime == "RANGE":
+        sl_mult, tp_mult = 1.2, 2.0
+    else:
+        sl_mult, tp_mult = 2.0, 2.5
+
+    sl = price - a * sl_mult if direction == "BUY" else price + a * sl_mult
+    tp = price + a * tp_mult if direction == "BUY" else price - a * tp_mult
 
     rr = abs(tp - price) / abs(price - sl)
 
     return {
+        "symbol": symbol,
+        "direction": direction,
         "entry": price,
         "sl": round(sl, 6),
         "tp": round(tp, 6),
         "rr": round(rr, 2),
         "score": score,
-        "direction": direction
+        "rsi": round(rsi, 2),
+        "regime": regime
     }
 
 
 # ---------------------------
-# AI WEIGHT ADJUSTMENT
-# ---------------------------
-def update_weights():
-
-    if performance["wins"] + performance["losses"] == 0:
-        return
-
-    winrate = performance["wins"] / (performance["wins"] + performance["losses"])
-
-    # adaptive tuning
-    if winrate < 0.4:
-        weights["rsi"] *= 1.05
-        weights["macd"] *= 1.05
-    elif winrate > 0.6:
-        weights["trend"] *= 1.05
-
-
-# ---------------------------
-# MAIN
+# MAIN ENGINE
 # ---------------------------
 def main():
 
@@ -152,16 +185,15 @@ def main():
 
     for i, symbol in enumerate(coins):
 
-        time.sleep(0.1)
+        time.sleep(0.08)
 
         df = get_data(symbol)
         if df is None:
             continue
 
-        res = analyze(df)
+        res = analyze(df, symbol)
 
         if res:
-            res["symbol"] = symbol
             results.append(res)
 
     results = sorted(results, key=lambda x: abs(x["score"]), reverse=True)
@@ -169,20 +201,22 @@ def main():
     top = results[:5]
 
     if not top:
-        msg = f"❌ No Signal\n🕒 {now}"
+        msg = f"❌ No Institutional-Grade Signal\n🕒 {now}"
     else:
-        msg = f"🤖 AI TRADING ENGINE\n🕒 {now}\n\n"
+        msg = f"🏛 INSTITUTIONAL TRADING ENGINE v5\n🕒 {now}\n\n"
 
         for r in top:
             msg += f"""
 💰 {r['symbol']}
 📊 {r['direction']}
-Score: {round(r['score'],2)}
+Regime: {r['regime']}
+Score: {r['score']}
+RSI: {r['rsi']}
 Entry: {r['entry']}
 SL: {r['sl']}
 TP: {r['tp']}
 RR: 1:{r['rr']}
-------------------
+--------------------
 """
 
     requests.post(
