@@ -13,7 +13,7 @@ TOP_LIMIT = 100
 
 def get_top_coins():
 
-```
+
 url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
 
 headers = {
