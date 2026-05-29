@@ -6,72 +6,49 @@ from datetime import datetime
 
 BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 CHAT_ID = os.getenv("TG_CHAT_ID")
+CMC_API_KEY = os.getenv("CMC_API_KEY")
 
-symbol = "BTCUSDT"
-interval = "5m"
-limit = 100
+symbol = "BTC"
 
-url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-data = requests.get(url).json()
+url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
 
-df = pd.DataFrame(data)
+headers = {
+    "X-CMC_PRO_API_KEY": CMC_API_KEY
+}
 
-df = df.iloc[:, :6]
-df.columns = ["time", "open", "high", "low", "close", "volume"]
+params = {
+    "symbol": symbol,
+    "convert": "USD"
+}
 
-df["close"] = df["close"].astype(float)
-df["high"] = df["high"].astype(float)
-df["low"] = df["low"].astype(float)
+resp = requests.get(url, headers=headers, params=params)
+data = resp.json()
 
-df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
+# 🔴 check API error
+if "data" not in data:
+    print("CMC ERROR:", data)
+    exit()
 
-macd = ta.trend.MACD(df["close"])
-df["macd"] = macd.macd()
-df["signal"] = macd.macd_signal()
-
-last = df.iloc[-1]
+price = data["data"][symbol]["quote"]["USD"]["price"]
 
 message = f"""
-📊 Crypto Scanner
+📊 Crypto Scanner (CMC)
 🕒 {datetime.utcnow()}
 
-💰 BTCUSDT
-Price: {last['close']}
-RSI: {round(last['rsi'],2)}
+💰 {symbol}/USD
+Price: {price}
 """
 
+# --- fake signal logic (همون منطق قبلی ساده) ---
 signal = False
 
-if last["rsi"] < 35 and last["macd"] > last["signal"]:
-    entry = last["close"]
-    sl = round(entry * 0.985, 2)
-    tp = round(entry * 1.03, 2)
-
-    message += f"""
-
-🟢 BUY SIGNAL
-Entry: {entry}
-SL: {sl}
-TP: {tp}
-"""
+# ساده‌سازی: بدون کندل چون CMC OHLC نمی‌دهد
+if price % 2 < 1:   # فقط تستی برای سیگنال
+    message += "\n🟢 BUY SIGNAL (test)"
     signal = True
-
-elif last["rsi"] > 65 and last["macd"] < last["signal"]:
-    entry = last["close"]
-    sl = round(entry * 1.015, 2)
-    tp = round(entry * 0.97, 2)
-
-    message += f"""
-
-🔴 SELL SIGNAL
-Entry: {entry}
-SL: {sl}
-TP: {tp}
-"""
+else:
+    message += "\n🔴 SELL SIGNAL (test)"
     signal = True
-
-if not signal:
-    message += "\n❌ No Signal"
 
 requests.post(
     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
