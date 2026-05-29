@@ -43,9 +43,11 @@ for c in data["data"]:
         coins.append(symbol + "USDT")
 
 return coins
+```
 
 def get_data(symbol):
 
+```
 try:
 
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=120"
@@ -82,9 +84,11 @@ except Exception as e:
     print(f"{symbol} ERROR:", e)
 
     return None
+```
 
 def score_signal(df):
 
+```
 rsi = ta.momentum.RSIIndicator(
     df["close"],
     window=14
@@ -121,9 +125,11 @@ else:
     score -= 1
 
 return score, rsi
+```
 
 def atr(df):
 
+```
 tr = pd.concat([
     df["high"] - df["low"],
     abs(df["high"] - df["close"].shift()),
@@ -131,9 +137,11 @@ tr = pd.concat([
 ], axis=1).max(axis=1)
 
 return tr.rolling(14).mean().iloc[-1]
+```
 
 def analyze(df, symbol):
 
+```
 score, rsi = score_signal(df)
 
 price = df["close"].iloc[-1]
@@ -173,9 +181,11 @@ return {
     "score": score,
     "rsi": round(rsi, 2)
 }
+```
 
 def main():
 
+```
 coins = get_top_coins()
 
 results = []
@@ -215,15 +225,18 @@ top = results[:5]
 if not top:
 
     msg = f"""
+```
 
 ❌ No Signal
 
 🕒 {now}
 """
 
+```
 else:
 
     msg = f"""
+```
 
 🏛 TRADING ENGINE
 
@@ -231,9 +244,11 @@ else:
 
 """
 
+```
     for r in top:
 
         msg += f"""
+```
 
 💰 {r['symbol']}
 📊 {r['direction']}
@@ -247,8 +262,11 @@ else:
 
 ⚖ RR: 1:{r['rr']}
 
+---
+
 """
 
+```
 requests.post(
     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
     data={
@@ -258,6 +276,7 @@ requests.post(
 )
 
 print(msg)
+```
 
-if name == "main":
+if **name** == "**main**":
 main()
