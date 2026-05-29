@@ -1,6 +1,6 @@
 import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # ===== CONFIG =====
 TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
@@ -22,35 +22,36 @@ def run_github():
     r = requests.post(URL, json={"ref": "main"}, headers=headers)
     return r.status_code
 
-# ===== UI =====
+# ===== MENU =====
 def menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🚀 Run Scanner", callback_data="run")]
     ])
 
 # ===== START =====
-def start(update: Update, context):
-    update.message.reply_text("📊 Trading Panel Active", reply_markup=menu())
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📊 Trading Panel Ready", reply_markup=menu())
 
 # ===== BUTTON =====
-def button(update: Update, context):
-    q = update.callback_query
-    q.answer()
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    if q.data == "run":
-        code = run_github()
-        q.edit_message_text(f"🚀 Trigger sent\nStatus: {code}", reply_markup=menu())
+    if query.data == "run":
+        status = run_github()
+        await query.edit_message_text(
+            f"🚀 Trigger sent to GitHub\nStatus: {status}",
+            reply_markup=menu()
+        )
 
 # ===== MAIN =====
 def main():
-    updater = Updater(TELEGRAM_TOKEN)
-    dp = updater.dispatcher
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(button))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button))
 
-    updater.start_polling()
-    updater.idle()
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
