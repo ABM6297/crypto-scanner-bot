@@ -9,7 +9,7 @@ BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 CHAT_ID = os.getenv("TG_CHAT_ID")
 CMC_API_KEY = os.getenv("CMC_API_KEY")
 
-TOP_LIMIT = 100
+TOP_LIMIT = 80
 
 
 def get_top_coins():
@@ -50,7 +50,7 @@ def get_data(symbol):
 
     try:
 
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=120"
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=150"
 
         r = requests.get(url, timeout=10)
 
@@ -86,47 +86,7 @@ def get_data(symbol):
         return None
 
 
-def score_signal(df):
-
-    rsi = ta.momentum.RSIIndicator(
-        df["close"],
-        window=14
-    ).rsi().iloc[-1]
-
-    macd = ta.trend.MACD(df["close"])
-
-    macd_val = macd.macd().iloc[-1]
-
-    macd_sig = macd.macd_signal().iloc[-1]
-
-    price = df["close"].iloc[-1]
-
-    ma20 = df["close"].rolling(20).mean().iloc[-1]
-
-    score = 0
-
-    if rsi < 35:
-        score += 2
-
-    elif rsi > 65:
-        score -= 2
-
-    if macd_val > macd_sig:
-        score += 2
-
-    else:
-        score -= 2
-
-    if price > ma20:
-        score += 1
-
-    else:
-        score -= 1
-
-    return score, rsi
-
-
-def atr(df):
+def calculate_atr(df):
 
     tr = pd.concat([
         df["high"] - df["low"],
@@ -139,48 +99,108 @@ def atr(df):
 
 def analyze(df, symbol):
 
-    score, rsi = score_signal(df)
+    close = df["close"]
 
-    price = df["close"].iloc[-1]
+    price = close.iloc[-1]
+
+    rsi = ta.momentum.RSIIndicator(
+        close,
+        window=14
+    ).rsi().iloc[-1]
+
+    ema20 = ta.trend.EMAIndicator(
+        close,
+        window=20
+    ).ema_indicator().iloc[-1]
+
+    ema50 = ta.trend.EMAIndicator(
+        close,
+        window=50
+    ).ema_indicator().iloc[-1]
+
+    macd = ta.trend.MACD(close)
+
+    macd_line = macd.macd().iloc[-1]
+
+    macd_signal = macd.macd_signal().iloc[-1]
+
+    current_volume = df["volume"].iloc[-1]
+
+    avg_volume = df["volume"].rolling(20).mean().iloc[-1]
+
+    score = 0
+
+    if ema20 > ema50:
+        score += 2
+    else:
+        score -= 2
+
+    if macd_line > macd_signal:
+        score += 2
+    else:
+        score -= 2
+
+    if 45 <= rsi <= 70:
+        score += 1
+
+    elif 30 <= rsi < 45:
+        score += 2
+
+    elif rsi > 75:
+        score -= 3
+
+    if current_volume > avg_volume * 1.3:
+        score += 1
 
     direction = None
 
-    if score >= 2:
+    if score >= 5:
         direction = "BUY"
 
-    elif score <= -2:
+    elif score <= -5:
         direction = "SELL"
 
     if not direction:
         return None
 
-    a = atr(df)
+    atr = calculate_atr(df)
 
     if direction == "BUY":
 
-        sl = price - a * 1.5
-        tp = price + a * 3
+        sl = price - atr * 1.5
+        tp1 = price + atr * 2
+        tp2 = price + atr * 3.5
 
     else:
 
-        sl = price + a * 1.5
-        tp = price - a * 3
+        sl = price + atr * 1.5
+        tp1 = price - atr * 2
+        tp2 = price - atr * 3.5
 
-    rr = abs(tp - price) / abs(price - sl)
+    rr = abs(tp2 - price) / abs(price - sl)
+
+    confidence = min(
+        95,
+        55 + abs(score) * 6
+    )
 
     return {
         "symbol": symbol,
         "direction": direction,
         "entry": round(price, 6),
         "sl": round(sl, 6),
-        "tp": round(tp, 6),
+        "tp1": round(tp1, 6),
+        "tp2": round(tp2, 6),
         "rr": round(rr, 2),
         "score": score,
-        "rsi": round(rsi, 2)
+        "rsi": round(rsi, 2),
+        "confidence": confidence
     }
 
 
 def main():
+
+    print("SCANNER STARTED")
 
     coins = get_top_coins()
 
@@ -188,11 +208,11 @@ def main():
 
     now = datetime.utcnow()
 
-    print("Scanner started")
-
     for symbol in coins:
 
         try:
+
+            print(f"CHECKING {symbol}")
 
             time.sleep(0.08)
 
@@ -201,10 +221,10 @@ def main():
             if df is None:
                 continue
 
-            res = analyze(df, symbol)
+            result = analyze(df, symbol)
 
-            if res:
-                results.append(res)
+            if result:
+                results.append(result)
 
         except Exception as e:
 
@@ -221,7 +241,7 @@ def main():
     if not top:
 
         msg = f"""
-❌ No Signal
+❌ NO HIGH QUALITY SIGNAL
 
 🕒 {now}
 """
@@ -229,7 +249,7 @@ def main():
     else:
 
         msg = f"""
-🏛 TRADING ENGINE
+🏛 ELITE CRYPTO SCANNER
 
 🕒 {now}
 
@@ -241,14 +261,23 @@ def main():
 💰 {r['symbol']}
 📊 {r['direction']}
 
-📉 RSI: {r['rsi']}
+🔥 Confidence: {r['confidence']}%
 🧠 Score: {r['score']}
+📉 RSI: {r['rsi']}
 
 💵 Entry: {r['entry']}
-🛑 SL: {r['sl']}
-🎯 TP: {r['tp']}
 
-⚖ RR: 1:{r['rr']}
+🛑 Stop Loss:
+{r['sl']}
+
+🎯 TP1:
+{r['tp1']}
+
+🚀 TP2:
+{r['tp2']}
+
+⚖ Risk/Reward:
+1:{r['rr']}
 
 ------------------------
 """
