@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import pandas as pd
 import ta
@@ -202,6 +203,13 @@ def main():
 
     print("SCANNER STARTED")
 
+    manual_mode = False
+
+    if len(sys.argv) > 1:
+
+        if sys.argv[1] == "manual":
+            manual_mode = True
+
     coins = get_top_coins()
 
     results = []
@@ -238,10 +246,17 @@ def main():
 
     top = results[:5]
 
+    if not manual_mode:
+
+        if not top:
+
+            print("NO SIGNAL")
+            return
+
     if not top:
 
         msg = f"""
-❌ NO HIGH QUALITY SIGNAL
+❌ NO SIGNAL
 
 🕒 {now}
 """
@@ -265,7 +280,8 @@ def main():
 🧠 Score: {r['score']}
 📉 RSI: {r['rsi']}
 
-💵 Entry: {r['entry']}
+💵 Entry:
+{r['entry']}
 
 🛑 Stop Loss:
 {r['sl']}
