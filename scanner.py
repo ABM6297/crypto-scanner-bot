@@ -135,24 +135,28 @@ def score_signal(df):
 
     score = 0
 
+    # RSI
     if rsi < 35:
         score += 2
 
     elif rsi > 65:
         score -= 2
 
+    # MACD
     if macd_val > macd_sig:
         score += 2
 
     else:
         score -= 2
 
+    # TREND
     if price > ma20:
         score += 1
 
     else:
         score -= 1
 
+    # VOLUME
     if current_volume > avg_volume * 1.5:
         score += 1
 
@@ -329,6 +333,7 @@ def main():
 ⚖ RR: 1:{r['rr']}
 
 ------------------------
+
 """
 
     requests.post(
