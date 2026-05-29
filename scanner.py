@@ -13,7 +13,6 @@ TOP_LIMIT = 100
 
 def get_top_coins():
 
-```
 url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
 
 headers = {
@@ -43,14 +42,10 @@ for c in data["data"]:
     if symbol.isalpha():
         coins.append(symbol + "USDT")
 
-print(f"Loaded {len(coins)} coins")
-
 return coins
-```
 
 def get_data(symbol):
 
-```
 try:
 
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=120"
@@ -84,37 +79,12 @@ try:
 
 except Exception as e:
 
-    print(f"{symbol} DATA ERROR:", e)
+    print(f"{symbol} ERROR:", e)
 
     return None
-```
-
-def market_regime(df):
-
-```
-ma20 = df["close"].rolling(20).mean()
-
-ma50 = df["close"].rolling(50).mean()
-
-trend_strength = abs(ma20.iloc[-1] - ma50.iloc[-1])
-
-atr_value = (
-    df["high"] - df["low"]
-).rolling(14).mean().iloc[-1]
-
-if trend_strength > atr_value:
-    return "TREND"
-
-elif atr_value > trend_strength * 1.5:
-    return "VOLATILE"
-
-else:
-    return "RANGE"
-```
 
 def score_signal(df):
 
-```
 rsi = ta.momentum.RSIIndicator(
     df["close"],
     window=14
@@ -129,10 +99,6 @@ macd_sig = macd.macd_signal().iloc[-1]
 price = df["close"].iloc[-1]
 
 ma20 = df["close"].rolling(20).mean().iloc[-1]
-
-avg_volume = df["volume"].rolling(20).mean().iloc[-1]
-
-current_volume = df["volume"].iloc[-1]
 
 score = 0
 
@@ -154,15 +120,10 @@ if price > ma20:
 else:
     score -= 1
 
-if current_volume > avg_volume * 1.5:
-    score += 1
-
 return score, rsi
-```
 
 def atr(df):
 
-```
 tr = pd.concat([
     df["high"] - df["low"],
     abs(df["high"] - df["close"].shift()),
@@ -170,12 +131,8 @@ tr = pd.concat([
 ], axis=1).max(axis=1)
 
 return tr.rolling(14).mean().iloc[-1]
-```
 
 def analyze(df, symbol):
-
-```
-regime = market_regime(df)
 
 score, rsi = score_signal(df)
 
@@ -194,39 +151,17 @@ if not direction:
 
 a = atr(df)
 
-if regime == "TREND":
-
-    sl_mult = 1.5
-    tp_mult = 3.0
-
-elif regime == "RANGE":
-
-    sl_mult = 1.2
-    tp_mult = 2.0
-
-else:
-
-    sl_mult = 2.0
-    tp_mult = 2.5
-
 if direction == "BUY":
 
-    sl = price - a * sl_mult
-
-    tp = price + a * tp_mult
+    sl = price - a * 1.5
+    tp = price + a * 3
 
 else:
 
-    sl = price + a * sl_mult
-
-    tp = price - a * tp_mult
+    sl = price + a * 1.5
+    tp = price - a * 3
 
 rr = abs(tp - price) / abs(price - sl)
-
-confidence = min(
-    95,
-    50 + abs(score) * 10
-)
 
 return {
     "symbol": symbol,
@@ -236,28 +171,22 @@ return {
     "tp": round(tp, 6),
     "rr": round(rr, 2),
     "score": score,
-    "rsi": round(rsi, 2),
-    "regime": regime,
-    "confidence": confidence
+    "rsi": round(rsi, 2)
 }
-```
 
 def main():
 
-```
 coins = get_top_coins()
 
 results = []
 
 now = datetime.utcnow()
 
-print("Scanner started...")
+print("Scanner started")
 
 for symbol in coins:
 
     try:
-
-        print(f"Checking {symbol}")
 
         time.sleep(0.08)
 
@@ -273,7 +202,7 @@ for symbol in coins:
 
     except Exception as e:
 
-        print(f"{symbol} ANALYZE ERROR:", e)
+        print(symbol, e)
 
 results = sorted(
     results,
@@ -286,37 +215,29 @@ top = results[:5]
 if not top:
 
     msg = f"""
-```
 
-❌ No High-Probability Signal
+❌ No Signal
 
 🕒 {now}
 """
 
-```
 else:
 
     msg = f"""
-```
 
-🏛 INSTITUTIONAL TRADING ENGINE v6
+🏛 TRADING ENGINE
 
 🕒 {now}
 
 """
 
-```
     for r in top:
 
         msg += f"""
-```
 
 💰 {r['symbol']}
 📊 {r['direction']}
 
-🔥 Confidence: {r['confidence']}%
-
-📈 Regime: {r['regime']}
 📉 RSI: {r['rsi']}
 🧠 Score: {r['score']}
 
@@ -326,11 +247,8 @@ else:
 
 ⚖ RR: 1:{r['rr']}
 
----
-
 """
 
-```
 requests.post(
     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
     data={
@@ -340,7 +258,6 @@ requests.post(
 )
 
 print(msg)
-```
 
-if **name** == "**main**":
+if name == "main":
 main()
