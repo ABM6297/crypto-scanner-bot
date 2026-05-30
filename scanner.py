@@ -1,9 +1,10 @@
 import os
 import sys
+import time
 import requests
 import pandas as pd
 import ta
-import time
+
 from datetime import datetime
 
 BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
@@ -13,39 +14,107 @@ CMC_API_KEY = os.getenv("CMC_API_KEY")
 TOP_LIMIT = 80
 
 
+def get_top_coins():
+
+    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
+
+    headers = {
+        "Accepts": "application/json",
+        "X-CMC_PRO_API_KEY": str(CMC_API_KEY).strip()
+    }
+
+    params = {
+        "start": 1,
+        "limit": TOP_LIMIT,
+        "convert": "USD"
+    }
+
+    try:
+
+        r = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=20
+        )
+
+        print("STATUS:", r.status_code)
+
+        data = r.json()
+
+        if "data" not in data:
+            print("CMC ERROR:", data)
+            return []
+
+        coins = []
+
+        blacklist = {
+            "USDT",
+            "USDC",
+            "DAI",
+            "FDUSD",
+            "PYUSD",
+            "USDE",
+            "USDD"
+        }
+
+        for c in data["data"]:
+
+            symbol = c["symbol"]
+
+            if not symbol.isalpha():
+                continue
+
+            if symbol.upper() in blacklist:
+                continue
+
+            coins.append(symbol.upper() + "USDT")
+
+        return coins
+
+    except Exception as e:
+
+        print("CMC ERROR:", e)
+        return []
+
+
 def get_data(symbol):
 
     try:
 
-        symbol = symbol.replace("USDT", "")
+        base_symbol = symbol.replace("USDT", "")
 
         url = (
             "https://api.bybit.com/v5/market/kline"
             f"?category=linear"
-            f"&symbol={symbol}USDT"
+            f"&symbol={base_symbol}USDT"
             f"&interval=15"
             f"&limit=150"
         )
 
         r = requests.get(
             url,
-            timeout=15,
+            timeout=20,
             headers={
                 "User-Agent": "Mozilla/5.0"
             }
         )
 
-        print(f"{symbol} STATUS =", r.status_code)
+        print(f"{base_symbol} STATUS =", r.status_code)
 
         try:
             data = r.json()
+
         except Exception:
-            print(f"{symbol} RAW RESPONSE:")
+
+            print(f"{base_symbol} RAW:")
             print(r.text[:500])
+
             return None
 
         if data.get("retCode") != 0:
-            print(f"{symbol} BYBIT ERROR:", data)
+
+            print(f"{base_symbol} BYBIT ERROR")
             return None
 
         rows = data["result"]["list"]
@@ -66,112 +135,24 @@ def get_data(symbol):
             "volume"
         ]
 
-        for c in ["open", "high", "low", "close", "volume"]:
-            df[c] = df[c].astype(float)
-
-        df = df.iloc[::-1].reset_index(drop=True)
-
-        return df
-
-    except Exception as e:
-
-        print(symbol, "ERROR:", e)
-
-        return None
-        
-    if "data" not in data:
-        print("CMC ERROR:", data)
-        return []
-
-    coins = []
-
-    for c in data["data"]:
-
-        symbol = c["symbol"]
-
-        if symbol.isalpha():
-
-            if symbol not in [
-                "USDT",
-                "USDC",
-                "DAI",
-                "FDUSD",
-                "PYUSD",
-                "USDE",
-                "USDD"
-            ]:
-                coins.append(symbol + "USDT")
-
-    return coins
-
-    if "data" not in data:
-        print("CMC ERROR:", data)
-        return []
-
-    coins = []
-
-    for c in data["data"]:
-        symbol = c["symbol"]
-
-        if symbol.isalpha():
-            coins.append(symbol + "USDT")
-
-    return coins
-
-
-def get_data(symbol):
-
-    try:
-
-        symbol = symbol.replace("USDT", "")
-
-        url = (
-            f"https://api.bybit.com/v5/market/kline"
-            f"?category=linear"
-            f"&symbol={symbol}USDT"
-            f"&interval=15"
-            f"&limit=150"
-        )
-
-        r = requests.get(url, timeout=10)
-        data = r.json()
-
-        if "result" not in data or "list" not in data["result"]:
-            print(f"{symbol} -> BYBIT ERROR")
-            return None
-
-        rows = data["result"]["list"]
-
-        if not rows:
-            return None
-
-        df = pd.DataFrame(rows)
-        df = df.iloc[:, :6]
-
-        df.columns = [
-            "time",
+        for col in [
             "open",
             "high",
             "low",
             "close",
             "volume"
-        ]
-
-        df["open"] = df["open"].astype(float)
-        df["high"] = df["high"].astype(float)
-        df["low"] = df["low"].astype(float)
-        df["close"] = df["close"].astype(float)
-        df["volume"] = df["volume"].astype(float)
+        ]:
+            df[col] = df[col].astype(float)
 
         df = df.iloc[::-1].reset_index(drop=True)
 
-        print(f"{symbol} -> DATA OK")
+        print(f"{base_symbol} DATA OK")
 
         return df
 
     except Exception as e:
 
-        print(f"{symbol} ERROR: {e}")
+        print(base_symbol, "ERROR:", e)
         return None
 
 
@@ -189,14 +170,26 @@ def calculate_atr(df):
 def analyze(df, symbol):
 
     close = df["close"]
+
     price = close.iloc[-1]
 
-    rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
+    rsi = ta.momentum.RSIIndicator(
+        close,
+        window=14
+    ).rsi().iloc[-1]
 
-    ema20 = ta.trend.EMAIndicator(close, window=20).ema_indicator().iloc[-1]
-    ema50 = ta.trend.EMAIndicator(close, window=50).ema_indicator().iloc[-1]
+    ema20 = ta.trend.EMAIndicator(
+        close,
+        window=20
+    ).ema_indicator().iloc[-1]
+
+    ema50 = ta.trend.EMAIndicator(
+        close,
+        window=50
+    ).ema_indicator().iloc[-1]
 
     macd = ta.trend.MACD(close)
+
     macd_line = macd.macd().iloc[-1]
     macd_signal = macd.macd_signal().iloc[-1]
 
@@ -217,8 +210,10 @@ def analyze(df, symbol):
 
     if 45 <= rsi <= 70:
         score += 1
+
     elif 30 <= rsi < 45:
         score += 2
+
     elif rsi > 75:
         score -= 3
 
@@ -229,6 +224,7 @@ def analyze(df, symbol):
 
     if score >= 5:
         direction = "BUY"
+
     elif score <= -5:
         direction = "SELL"
 
@@ -237,18 +233,27 @@ def analyze(df, symbol):
 
     atr = calculate_atr(df)
 
+    if atr <= 0:
+        return None
+
     if direction == "BUY":
+
         sl = price - atr * 1.5
         tp1 = price + atr * 2
         tp2 = price + atr * 3.5
+
     else:
+
         sl = price + atr * 1.5
         tp1 = price - atr * 2
         tp2 = price - atr * 3.5
 
     rr = abs(tp2 - price) / abs(price - sl)
 
-    confidence = min(95, 55 + abs(score) * 6)
+    confidence = min(
+        95,
+        55 + abs(score) * 6
+    )
 
     return {
         "symbol": symbol,
@@ -264,21 +269,48 @@ def analyze(df, symbol):
     }
 
 
+def send_telegram(msg):
+
+    try:
+
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={
+                "chat_id": CHAT_ID,
+                "text": msg
+            },
+            timeout=20
+        )
+
+    except Exception as e:
+
+        print("TELEGRAM ERROR:", e)
+
+
 def main():
-    print("CMC_API_KEY =", repr(CMC_API_KEY))
+
     print("SCANNER STARTED")
 
-    manual_mode = len(sys.argv) > 1 and sys.argv[1] == "manual"
+    manual_mode = (
+        len(sys.argv) > 1
+        and sys.argv[1] == "manual"
+    )
 
     coins = get_top_coins()
+
+    if not coins:
+        print("NO COINS")
+        return
+
     results = []
+
     now = datetime.utcnow()
 
     for symbol in coins:
 
         try:
 
-            print(f"CHECKING {symbol}")
+            print("CHECKING", symbol)
 
             time.sleep(0.1)
 
@@ -287,7 +319,10 @@ def main():
             if df is None:
                 continue
 
-            result = analyze(df, symbol)
+            result = analyze(
+                df,
+                symbol
+            )
 
             if result:
                 results.append(result)
@@ -305,6 +340,7 @@ def main():
     top = results[:5]
 
     if not manual_mode and not top:
+
         print("NO SIGNAL")
         return
 
@@ -314,7 +350,10 @@ def main():
 
     else:
 
-        msg = f"🏛 ELITE CRYPTO SCANNER\n\n🕒 {now}\n\n"
+        msg = (
+            f"🏛 ELITE CRYPTO SCANNER\n\n"
+            f"🕒 {now}\n\n"
+        )
 
         for r in top:
 
@@ -336,13 +375,7 @@ def main():
 ------------------------
 """
 
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": msg
-        }
-    )
+    send_telegram(msg)
 
     print(msg)
 
