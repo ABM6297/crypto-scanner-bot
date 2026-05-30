@@ -28,7 +28,6 @@ def get_top_coins():
     }
 
     r = requests.get(url, headers=headers, params=params)
-
     data = r.json()
 
     if "data" not in data:
@@ -38,7 +37,6 @@ def get_top_coins():
     coins = []
 
     for c in data["data"]:
-
         symbol = c["symbol"]
 
         if symbol.isalpha():
@@ -51,22 +49,29 @@ def get_data(symbol):
 
     try:
 
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=150"
+        symbol = symbol.replace("USDT", "")
+
+        url = (
+            f"https://api.bybit.com/v5/market/kline"
+            f"?category=linear"
+            f"&symbol={symbol}USDT"
+            f"&interval=15"
+            f"&limit=150"
+        )
 
         r = requests.get(url, timeout=10)
-
         data = r.json()
 
-        if not isinstance(data, list):
-
-            print(f"{symbol} -> BINANCE ERROR: {data}")
-
+        if "result" not in data or "list" not in data["result"]:
+            print(f"{symbol} -> BYBIT ERROR")
             return None
 
-        print(f"{symbol} -> DATA OK")
+        rows = data["result"]["list"]
 
-        df = pd.DataFrame(data)
+        if not rows:
+            return None
 
+        df = pd.DataFrame(rows)
         df = df.iloc[:, :6]
 
         df.columns = [
@@ -78,17 +83,21 @@ def get_data(symbol):
             "volume"
         ]
 
-        df["close"] = df["close"].astype(float)
+        df["open"] = df["open"].astype(float)
         df["high"] = df["high"].astype(float)
         df["low"] = df["low"].astype(float)
+        df["close"] = df["close"].astype(float)
         df["volume"] = df["volume"].astype(float)
+
+        df = df.iloc[::-1].reset_index(drop=True)
+
+        print(f"{symbol} -> DATA OK")
 
         return df
 
     except Exception as e:
 
-        print(f"{symbol} ERROR:", e)
-
+        print(f"{symbol} ERROR: {e}")
         return None
 
 
@@ -106,34 +115,18 @@ def calculate_atr(df):
 def analyze(df, symbol):
 
     close = df["close"]
-
     price = close.iloc[-1]
 
-    raise Exception("TEST123")
+    rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
 
-    rsi = ta.momentum.RSIIndicator(
-        close,
-        window=14
-    ).rsi().iloc[-1]
-
-    ema20 = ta.trend.EMAIndicator(
-        close,
-        window=20
-    ).ema_indicator().iloc[-1]
-
-    ema50 = ta.trend.EMAIndicator(
-        close,
-        window=50
-    ).ema_indicator().iloc[-1]
+    ema20 = ta.trend.EMAIndicator(close, window=20).ema_indicator().iloc[-1]
+    ema50 = ta.trend.EMAIndicator(close, window=50).ema_indicator().iloc[-1]
 
     macd = ta.trend.MACD(close)
-
     macd_line = macd.macd().iloc[-1]
-
     macd_signal = macd.macd_signal().iloc[-1]
 
     current_volume = df["volume"].iloc[-1]
-
     avg_volume = df["volume"].rolling(20).mean().iloc[-1]
 
     score = 0
@@ -150,31 +143,18 @@ def analyze(df, symbol):
 
     if 45 <= rsi <= 70:
         score += 1
-
     elif 30 <= rsi < 45:
         score += 2
-
     elif rsi > 75:
         score -= 3
 
     if current_volume > avg_volume * 1.3:
         score += 1
 
-    print(
-        f"{symbol} | "
-        f"SCORE={score} | "
-        f"RSI={round(rsi,2)} | "
-        f"EMA20={round(ema20,4)} | "
-        f"EMA50={round(ema50,4)} | "
-        f"MACD={round(macd_line,4)} | "
-        f"SIGNAL={round(macd_signal,4)}"
-)
-
     direction = None
 
     if score >= 5:
         direction = "BUY"
-
     elif score <= -5:
         direction = "SELL"
 
@@ -184,23 +164,17 @@ def analyze(df, symbol):
     atr = calculate_atr(df)
 
     if direction == "BUY":
-
         sl = price - atr * 1.5
         tp1 = price + atr * 2
         tp2 = price + atr * 3.5
-
     else:
-
         sl = price + atr * 1.5
         tp1 = price - atr * 2
         tp2 = price - atr * 3.5
 
     rr = abs(tp2 - price) / abs(price - sl)
 
-    confidence = min(
-        95,
-        55 + abs(score) * 6
-    )
+    confidence = min(95, 55 + abs(score) * 6)
 
     return {
         "symbol": symbol,
@@ -220,17 +194,10 @@ def main():
 
     print("SCANNER STARTED")
 
-    manual_mode = False
-
-    if len(sys.argv) > 1:
-
-        if sys.argv[1] == "manual":
-            manual_mode = True
+    manual_mode = len(sys.argv) > 1 and sys.argv[1] == "manual"
 
     coins = get_top_coins()
-
     results = []
-
     now = datetime.utcnow()
 
     for symbol in coins:
@@ -239,7 +206,7 @@ def main():
 
             print(f"CHECKING {symbol}")
 
-            time.sleep(0.08)
+            time.sleep(0.1)
 
             df = get_data(symbol)
 
@@ -263,29 +230,17 @@ def main():
 
     top = results[:5]
 
-    if not manual_mode:
-
-        if not top:
-
-            print("NO SIGNAL")
-            return
+    if not manual_mode and not top:
+        print("NO SIGNAL")
+        return
 
     if not top:
 
-        msg = f"""
-❌ NO SIGNAL
-
-🕒 {now}
-"""
+        msg = f"❌ NO SIGNAL\n\n🕒 {now}"
 
     else:
 
-        msg = f"""
-🏛 ELITE CRYPTO SCANNER
-
-🕒 {now}
-
-"""
+        msg = f"🏛 ELITE CRYPTO SCANNER\n\n🕒 {now}\n\n"
 
         for r in top:
 
@@ -297,20 +252,12 @@ def main():
 🧠 Score: {r['score']}
 📉 RSI: {r['rsi']}
 
-💵 Entry:
-{r['entry']}
+💵 Entry: {r['entry']}
+🛑 Stop Loss: {r['sl']}
+🎯 TP1: {r['tp1']}
+🚀 TP2: {r['tp2']}
 
-🛑 Stop Loss:
-{r['sl']}
-
-🎯 TP1:
-{r['tp1']}
-
-🚀 TP2:
-{r['tp2']}
-
-⚖ Risk/Reward:
-1:{r['rr']}
+⚖ Risk/Reward: 1:{r['rr']}
 
 ------------------------
 """
