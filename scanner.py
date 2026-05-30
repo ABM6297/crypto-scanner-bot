@@ -2,136 +2,113 @@ import os
 import requests
 import pandas as pd
 import ta
+from datetime import datetime
 
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
-CMC_API_KEY = os.getenv("CMC_API_KEY")
 
-TOP_LIMIT = 10
+BASE_URL = "https://api.binance.com/api/v3/klines"
 
 BLACKLIST = {"USDT", "USDC", "DAI", "FDUSD", "PYUSD"}
+
+LAST_SIGNAL_FILE = "last_signal.txt"
 
 
 # =========================
 # TELEGRAM
 # =========================
-def send_telegram(message: str):
+def send_telegram(message):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         print("TELEGRAM CONFIG MISSING")
         return
 
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
 
-    payload = {
+    requests.post(url, json={
         "chat_id": TG_CHAT_ID,
         "text": message
-    }
-
-    try:
-        r = requests.post(url, json=payload, timeout=15)
-        print("TG STATUS:", r.status_code)
-    except Exception as e:
-        print("TG ERROR:", e)
+    }, timeout=15)
 
 
 # =========================
-# TOP COINS (CMC)
+# TOP COINS (BINANCE ONLY)
 # =========================
-def get_top_coins():
-    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
-
-    headers = {
-        "Accepts": "application/json",
-        "X-CMC_PRO_API_KEY": str(CMC_API_KEY or "").strip()
-    }
-
-    params = {
-        "start": 1,
-        "limit": TOP_LIMIT,
-        "convert": "USD"
-    }
+def get_top_symbols():
+    url = "https://api.binance.com/api/v3/ticker/24hr"
 
     try:
-        r = requests.get(url, headers=headers, params=params, timeout=20)
+        r = requests.get(url, timeout=15)
         data = r.json()
 
-        if "data" not in data:
-            print("CMC ERROR:", data)
-            return []
+        symbols = []
 
-        coins = []
-        for coin in data["data"]:
-            symbol = coin["symbol"]
-            if symbol not in BLACKLIST:
-                coins.append(symbol)
+        for item in data:
+            symbol = item["symbol"]
 
-        return coins
+            if symbol.endswith("USDT") and not any(b in symbol for b in BLACKLIST):
+                symbols.append(symbol)
+
+        return symbols[:10]
 
     except Exception as e:
-        print("CMC ERROR:", e)
+        print("SYMBOL ERROR:", e)
         return []
 
 
 # =========================
-# PRICE DATA (CryptoCompare)
+# GET DATA
 # =========================
 def get_data(symbol):
-    url = (
-        "https://min-api.cryptocompare.com/data/v2/histohour"
-        f"?fsym={symbol}&tsym=USD&limit=200"
-    )
-
     try:
-        r = requests.get(url, timeout=20)
+        params = {
+            "symbol": symbol,
+            "interval": "1h",
+            "limit": 200
+        }
+
+        r = requests.get(BASE_URL, params=params, timeout=15)
         data = r.json()
 
-        if data.get("Response") != "Success":
-            print(symbol, "NO DATA")
-            return None
+        df = pd.DataFrame(data, columns=[
+            "time","open","high","low","close","volume",
+            "ct","qav","trades","tbb","tbq","ignore"
+        ])
 
-        rows = data["Data"]["Data"]
-
-        if len(rows) < 100:
-            print(symbol, "NOT ENOUGH DATA")
-            return None
-
-        df = pd.DataFrame(rows)
-
-        df = df[["time", "open", "high", "low", "close", "volumefrom"]]
-        df = df.rename(columns={"volumefrom": "volume"})
+        df = df.astype({
+            "open": float,
+            "high": float,
+            "low": float,
+            "close": float,
+            "volume": float
+        })
 
         return df
 
     except Exception as e:
-        print(symbol, "ERROR:", e)
+        print(symbol, "DATA ERROR:", e)
         return None
 
 
 # =========================
 # ATR
 # =========================
-def calculate_atr(df):
-    atr = ta.volatility.AverageTrueRange(
-        high=df["high"],
-        low=df["low"],
-        close=df["close"],
-        window=14
-    )
-    return float(atr.average_true_range().iloc[-1])
+def atr(df):
+    return ta.volatility.AverageTrueRange(
+        df["high"], df["low"], df["close"], window=14
+    ).average_true_range().iloc[-1]
 
 
 # =========================
-# ANALYSIS ENGINE
+# ANALYSIS (PRO VERSION)
 # =========================
 def analyze(df):
     close = df["close"]
-
     price = float(close.iloc[-1])
 
-    ema20 = ta.trend.EMAIndicator(close, window=20).ema_indicator()
-    ema50 = ta.trend.EMAIndicator(close, window=50).ema_indicator()
+    ema20 = ta.trend.EMAIndicator(close, 20).ema_indicator()
+    ema50 = ta.trend.EMAIndicator(close, 50).ema_indicator()
 
-    rsi = ta.momentum.RSIIndicator(close, window=14).rsi()
+    rsi = ta.momentum.RSIIndicator(close, 14).rsi()
 
     macd = ta.trend.MACD(close)
     macd_line = macd.macd()
@@ -139,91 +116,106 @@ def analyze(df):
 
     score = 0
 
-    # Trend
+    # Trend Strength (IMPORTANT)
     if ema20.iloc[-1] > ema50.iloc[-1]:
-        score += 3
+        score += 4
     else:
-        score -= 3
+        score -= 4
 
     # MACD
     if macd_line.iloc[-1] > signal_line.iloc[-1]:
-        score += 2
-    else:
-        score -= 2
-
-    # RSI filter
-    current_rsi = float(rsi.iloc[-1])
-
-    if 50 <= current_rsi <= 70:
-        score += 2
-    elif current_rsi > 75:
-        score -= 2
-
-    # Breakout
-    breakout_high = df["high"].rolling(20).max().shift(1).iloc[-1]
-    breakout_low = df["low"].rolling(20).min().shift(1).iloc[-1]
-
-    if price > breakout_high:
         score += 3
-    if price < breakout_low:
+    else:
         score -= 3
 
-    atr = calculate_atr(df)
+    # RSI filtering (stricter)
+    r = float(rsi.iloc[-1])
 
-    # Direction
-    if score >= 3:
+    if 45 <= r <= 65:
+        score += 3
+    elif r > 75:
+        score -= 3
+    elif r < 30:
+        score += 1
+
+    # Breakout (strong filter)
+    high20 = df["high"].rolling(20).max().shift(1).iloc[-1]
+    low20 = df["low"].rolling(20).min().shift(1).iloc[-1]
+
+    if price > high20:
+        score += 4
+    elif price < low20:
+        score -= 4
+
+    a = float(atr(df))
+
+    direction = "NEUTRAL"
+
+    if score >= 6:
         direction = "BUY"
-    elif score <= -3:
+    elif score <= -6:
         direction = "SELL"
-    else:
-        direction = "NEUTRAL"
 
     entry = price
-
     stop = tp1 = tp2 = 0
 
     if direction == "BUY":
-        stop = entry - (atr * 1.5)
+        stop = entry - (a * 1.5)
         risk = entry - stop
-        tp1 = entry + (risk * 2)
-        tp2 = entry + (risk * 3)
+        tp1 = entry + risk * 2
+        tp2 = entry + risk * 3
 
     elif direction == "SELL":
-        stop = entry + (atr * 1.5)
+        stop = entry + (a * 1.5)
         risk = stop - entry
-        tp1 = entry - (risk * 2)
-        tp2 = entry - (risk * 3)
+        tp1 = entry - risk * 2
+        tp2 = entry - risk * 3
 
     return {
-        "price": round(price, 6),
-        "score": int(score),
+        "price": price,
+        "score": score,
         "direction": direction,
-        "rsi": round(current_rsi, 2),
-        "atr": round(atr, 6),
-        "entry": round(entry, 6),
-        "stop": round(stop, 6),
-        "tp1": round(tp1, 6),
-        "tp2": round(tp2, 6)
+        "rsi": r,
+        "atr": a,
+        "entry": entry,
+        "stop": stop,
+        "tp1": tp1,
+        "tp2": tp2
     }
+
+
+# =========================
+# ANTI-SPAM SYSTEM
+# =========================
+def load_last_signal():
+    if not os.path.exists(LAST_SIGNAL_FILE):
+        return None
+
+    return open(LAST_SIGNAL_FILE, "r").read().strip()
+
+
+def save_last_signal(symbol):
+    with open(LAST_SIGNAL_FILE, "w") as f:
+        f.write(symbol)
 
 
 # =========================
 # FORMAT MESSAGE
 # =========================
-def format_message(symbol, r):
+def format_msg(symbol, r):
     return f"""
 🚀 {symbol}
 
 Direction: {r['direction']}
 Score: {r['score']}
 
-Entry: {r['entry']}
-Stop Loss: {r['stop']}
-Take Profit 1: {r['tp1']}
-Take Profit 2: {r['tp2']}
+Entry: {round(r['entry'], 6)}
+Stop: {round(r['stop'], 6)}
+TP1: {round(r['tp1'], 6)}
+TP2: {round(r['tp2'], 6)}
 
-RSI: {r['rsi']}
-ATR: {r['atr']}
+RSI: {round(r['rsi'], 2)}
+ATR: {round(r['atr'], 6)}
 """
 
 
@@ -231,42 +223,47 @@ ATR: {r['atr']}
 # MAIN
 # =========================
 def main():
-    print("SCANNER STARTED")
+    print("PRO SCANNER STARTED")
 
-    coins = get_top_coins()
-    print("COINS:", coins)
+    symbols = get_top_symbols()
+    print("SYMBOLS:", symbols)
 
     results = []
 
-    for symbol in coins:
-        print("CHECKING", symbol)
-
-        df = get_data(symbol)
+    for s in symbols:
+        df = get_data(s)
         if df is None:
             continue
 
-        result = analyze(df)
-        result["symbol"] = symbol
+        res = analyze(df)
+        res["symbol"] = s
+        results.append(res)
 
-        results.append(result)
-
-    results = sorted(results, key=lambda x: x["score"], reverse=True)
+    # sort best signal
+    results.sort(key=lambda x: x["score"], reverse=True)
 
     signals = [r for r in results if r["direction"] != "NEUTRAL"]
 
     if not signals:
         print("NO SIGNAL")
-        send_telegram("📊 NO SIGNAL FOUND")
+        send_telegram("📊 NO SIGNAL (PRO MODE)")
         return
 
-    for r in signals:
-        msg = format_message(r["symbol"], r)
-        print(msg)
-        send_telegram(msg)
+    best = signals[0]
+
+    last = load_last_signal()
+
+    # جلوگیری از تکرار
+    if last == best["symbol"] + best["direction"]:
+        print("DUPLICATE SIGNAL BLOCKED")
+        return
+
+    msg = format_msg(best["symbol"], best)
+    print(msg)
+
+    send_telegram(msg)
+    save_last_signal(best["symbol"] + best["direction"])
 
 
-# =========================
-# RUN
-# =========================
 if __name__ == "__main__":
     main()
