@@ -176,7 +176,6 @@ def analyze(df):
 
     if 50 <= current_rsi <= 70:
         score += 2
-
     elif current_rsi > 75:
         score -= 2
 
@@ -204,11 +203,50 @@ def analyze(df):
 
     atr = calculate_atr(df)
 
+    direction = "NEUTRAL"
+
+    if score >= 5:
+        direction = "BUY"
+
+    elif score <= -5:
+        direction = "SELL"
+
+    entry = price
+
+    if direction == "BUY":
+
+        stop = entry - (atr * 1.5)
+
+        risk = entry - stop
+
+        tp1 = entry + (risk * 2)
+        tp2 = entry + (risk * 3)
+
+    elif direction == "SELL":
+
+        stop = entry + (atr * 1.5)
+
+        risk = stop - entry
+
+        tp1 = entry - (risk * 2)
+        tp2 = entry - (risk * 3)
+
+    else:
+
+        stop = 0
+        tp1 = 0
+        tp2 = 0
+
     return {
         "price": round(price, 6),
         "score": int(score),
+        "direction": direction,
         "rsi": round(current_rsi, 2),
-        "atr": round(float(atr), 6)
+        "atr": round(float(atr), 6),
+        "entry": round(entry, 6),
+        "stop": round(stop, 6),
+        "tp1": round(tp1, 6),
+        "tp2": round(tp2, 6)
     }
 
 
@@ -246,17 +284,44 @@ def main():
         reverse=True
     )
 
-    print("\n===== TOP RESULTS =====\n")
+    print("\\n===== SIGNALS =====\\n")
 
-    for r in results:
+    signals = [
+        x for x in results
+        if x["direction"] != "NEUTRAL"
+    ]
 
-        print(
-            f"{r['symbol']} | "
-            f"Score={r['score']} | "
-            f"RSI={r['rsi']} | "
-            f"ATR={r['atr']} | "
-            f"Price={r['price']}"
-        )
+    if not signals:
+
+        print("NO SIGNAL")
+
+    else:
+
+        for r in signals:
+
+            print(
+                f"""
+=========================
+{r['symbol']}
+
+Direction: {r['direction']}
+
+Score: {r['score']}
+
+Entry: {r['entry']}
+
+Stop Loss: {r['stop']}
+
+Take Profit 1: {r['tp1']}
+
+Take Profit 2: {r['tp2']}
+
+RSI: {r['rsi']}
+
+ATR: {r['atr']}
+=========================
+"""
+            )
 
 
 if __name__ == "__main__":
