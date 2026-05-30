@@ -58,7 +58,12 @@ def get_data(symbol):
         data = r.json()
 
         if not isinstance(data, list):
+
+            print(f"{symbol} -> BINANCE ERROR: {data}")
+
             return None
+
+        print(f"{symbol} -> DATA OK")
 
         df = pd.DataFrame(data)
 
