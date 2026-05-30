@@ -3,6 +3,8 @@ import requests
 import pandas as pd
 import ta
 
+TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
+TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 CMC_API_KEY = os.getenv("CMC_API_KEY")
 
 TOP_LIMIT = 10
@@ -249,6 +251,31 @@ def analyze(df):
         "tp2": round(tp2, 6)
     }
 
+def send_telegram(message):
+
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        print("TELEGRAM CONFIG MISSING")
+        return
+
+    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TG_CHAT_ID,
+        "text": message
+    }
+
+    try:
+        r = requests.post(
+            url,
+            json=payload,
+            timeout=20
+        )
+
+        print("TG STATUS:", r.status_code)
+
+    except Exception as e:
+        print("TG ERROR:", e)
+
 
 def main():
 
@@ -299,8 +326,28 @@ def main():
 
         for r in signals:
 
-            print(
-                f"""
+            msg = f"""
+    🚀 {r['symbol']}
+
+    Direction: {r['direction']}
+    Score: {r['score']}
+
+    Entry: {r['entry']}
+
+    Stop Loss: {r['stop']}
+
+    Take Profit 1: {r['tp1']}
+
+    Take Profit 2: {r['tp2']}
+
+    RSI: {r['rsi']}
+
+    ATR: {r['atr']}
+    """
+
+           print(msg)
+
+           send_telegram(msg)
 =========================
 {r['symbol']}
 
@@ -322,6 +369,9 @@ ATR: {r['atr']}
 =========================
 """
             )
+
+
+send_telegram("TEST MESSAGE FROM GITHUB")
 
 
 if __name__ == "__main__":
