@@ -9,6 +9,7 @@ TOP_LIMIT = 10
 
 
 def get_top_coins():
+
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
 
     headers = {
@@ -22,7 +23,16 @@ def get_top_coins():
         "convert": "USD"
     }
 
+    blacklist = {
+        "USDT",
+        "USDC",
+        "DAI",
+        "FDUSD",
+        "PYUSD"
+    }
+
     try:
+
         r = requests.get(
             url,
             headers=headers,
@@ -33,22 +43,14 @@ def get_top_coins():
         data = r.json()
 
         if "data" not in data:
-            print(data)
+            print("CMC ERROR:", data)
             return []
-
-        blacklist = {
-            "USDT",
-            "USDC",
-            "DAI",
-            "FDUSD",
-            "PYUSD"
-        }
 
         coins = []
 
-        for c in data["data"]:
+        for coin in data["data"]:
 
-            symbol = c["symbol"]
+            symbol = coin["symbol"]
 
             if symbol in blacklist:
                 continue
@@ -58,6 +60,7 @@ def get_top_coins():
         return coins
 
     except Exception as e:
+
         print("CMC ERROR:", e)
         return []
 
@@ -73,7 +76,10 @@ def get_data(symbol):
             "&limit=200"
         )
 
-        r = requests.get(url, timeout=20)
+        r = requests.get(
+            url,
+            timeout=20
+        )
 
         data = r.json()
 
@@ -89,9 +95,11 @@ def get_data(symbol):
 
         df = pd.DataFrame(rows)
 
-        df = df.rename(columns={
-            "volumefrom": "volume"
-        })
+        df = df.rename(
+            columns={
+                "volumefrom": "volume"
+            }
+        )
 
         df = df[
             [
@@ -112,32 +120,95 @@ def get_data(symbol):
         return None
 
 
+def calculate_atr(df):
+
+    atr = ta.volatility.AverageTrueRange(
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        window=14
+    )
+
+    return float(
+        atr.average_true_range().iloc[-1]
+    )
+
+
 def analyze(df):
 
     close = df["close"]
 
+    price = float(close.iloc[-1])
+
     ema20 = ta.trend.EMAIndicator(
         close,
         window=20
-    ).ema_indicator().iloc[-1]
+    ).ema_indicator()
 
     ema50 = ta.trend.EMAIndicator(
         close,
         window=50
-    ).ema_indicator().iloc[-1]
+    ).ema_indicator()
 
     rsi = ta.momentum.RSIIndicator(
         close,
         window=14
-    ).rsi().iloc[-1]
+    ).rsi()
 
-    price = close.iloc[-1]
+    macd = ta.trend.MACD(close)
+
+    macd_line = macd.macd()
+    signal_line = macd.macd_signal()
+
+    score = 0
+
+    if ema20.iloc[-1] > ema50.iloc[-1]:
+        score += 3
+    else:
+        score -= 3
+
+    if macd_line.iloc[-1] > signal_line.iloc[-1]:
+        score += 2
+    else:
+        score -= 2
+
+    current_rsi = float(rsi.iloc[-1])
+
+    if 50 <= current_rsi <= 70:
+        score += 2
+
+    elif current_rsi > 75:
+        score -= 2
+
+    breakout_high = (
+        df["high"]
+        .rolling(20)
+        .max()
+        .shift(1)
+        .iloc[-1]
+    )
+
+    breakout_low = (
+        df["low"]
+        .rolling(20)
+        .min()
+        .shift(1)
+        .iloc[-1]
+    )
+
+    if price > breakout_high:
+        score += 3
+
+    if price < breakout_low:
+        score -= 3
+
+    atr = calculate_atr(df)
 
     return {
-        "price": round(price, 4),
-        "ema20": round(ema20, 4),
-        "ema50": round(ema50, 4),
-        "rsi": round(rsi, 2)
+        "price": round(price, 6),
+        "score": int(score),
+        "rsi": round(current_rsi, 2),
+        "atr": round(float(atr), 6)
     }
 
 
@@ -148,6 +219,8 @@ def main():
     coins = get_top_coins()
 
     print("COINS:", len(coins))
+
+    results = []
 
     for symbol in coins:
 
@@ -160,7 +233,30 @@ def main():
 
         result = analyze(df)
 
-        print(symbol, result)
+        results.append(
+            {
+                "symbol": symbol,
+                **result
+            }
+        )
+
+    results = sorted(
+        results,
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    print("\n===== TOP RESULTS =====\n")
+
+    for r in results:
+
+        print(
+            f"{r['symbol']} | "
+            f"Score={r['score']} | "
+            f"RSI={r['rsi']} | "
+            f"ATR={r['atr']} | "
+            f"Price={r['price']}"
+        )
 
 
 if __name__ == "__main__":
