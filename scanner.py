@@ -2,7 +2,6 @@ import os
 import requests
 import pandas as pd
 import ta
-from datetime import datetime
 
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
@@ -10,8 +9,6 @@ TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 BASE_URL = "https://api.binance.com/api/v3/klines"
 
 BLACKLIST = {"USDT", "USDC", "DAI", "FDUSD", "PYUSD"}
-
-LAST_SIGNAL_FILE = "last_signal.txt"
 
 
 # =========================
@@ -24,14 +21,17 @@ def send_telegram(message):
 
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
 
-    requests.post(url, json={
-        "chat_id": TG_CHAT_ID,
-        "text": message
-    }, timeout=15)
+    try:
+        requests.post(url, json={
+            "chat_id": TG_CHAT_ID,
+            "text": message
+        }, timeout=15)
+    except Exception as e:
+        print("TG ERROR:", e)
 
 
 # =========================
-# TOP COINS (BINANCE ONLY)
+# TOP COINS FROM BINANCE
 # =========================
 def get_top_symbols():
     url = "https://api.binance.com/api/v3/ticker/24hr"
@@ -56,7 +56,7 @@ def get_top_symbols():
 
 
 # =========================
-# GET DATA
+# GET OHLC DATA
 # =========================
 def get_data(symbol):
     try:
@@ -90,21 +90,13 @@ def get_data(symbol):
 
 
 # =========================
-# ATR
-# =========================
-def atr(df):
-    return ta.volatility.AverageTrueRange(
-        df["high"], df["low"], df["close"], window=14
-    ).average_true_range().iloc[-1]
-
-
-# =========================
-# ANALYSIS (PRO VERSION)
+# ANALYZE (V3 ENGINE)
 # =========================
 def analyze(df):
     close = df["close"]
     price = float(close.iloc[-1])
 
+    # ===== Indicators =====
     ema20 = ta.trend.EMAIndicator(close, 20).ema_indicator()
     ema50 = ta.trend.EMAIndicator(close, 50).ema_indicator()
 
@@ -114,9 +106,46 @@ def analyze(df):
     macd_line = macd.macd()
     signal_line = macd.macd_signal()
 
+    adx = ta.trend.ADXIndicator(
+        df["high"], df["low"], df["close"], window=14
+    ).adx()
+
+    atr_ind = ta.volatility.AverageTrueRange(
+        df["high"], df["low"], df["close"], window=14
+    )
+
+    atr_value = float(atr_ind.average_true_range().iloc[-1])
+
+    adx_value = float(adx.iloc[-1])
+    rsi_value = float(rsi.iloc[-1])
+
+    # =========================
+    # MARKET REGIME
+    # =========================
+    if adx_value >= 25:
+        regime = "STRONG_TREND"
+    elif adx_value >= 18:
+        regime = "TREND"
+    else:
+        regime = "RANGE"
+
+    # =========================
+    # RANGE FILTER (NO TRADE)
+    # =========================
+    if regime == "RANGE":
+        return {
+            "direction": "NEUTRAL",
+            "score": -999,
+            "price": price,
+            "trend": regime
+        }
+
+    # =========================
+    # SCORE ENGINE
+    # =========================
     score = 0
 
-    # Trend Strength (IMPORTANT)
+    # Trend
     if ema20.iloc[-1] > ema50.iloc[-1]:
         score += 4
     else:
@@ -128,17 +157,15 @@ def analyze(df):
     else:
         score -= 3
 
-    # RSI filtering (stricter)
-    r = float(rsi.iloc[-1])
-
-    if 45 <= r <= 65:
+    # RSI logic
+    if 45 <= rsi_value <= 65:
         score += 3
-    elif r > 75:
-        score -= 3
-    elif r < 30:
-        score += 1
+    elif rsi_value > 75:
+        score -= 4
+    elif rsi_value < 30:
+        score += 2
 
-    # Breakout (strong filter)
+    # Breakout
     high20 = df["high"].rolling(20).max().shift(1).iloc[-1]
     low20 = df["low"].rolling(20).min().shift(1).iloc[-1]
 
@@ -147,56 +174,63 @@ def analyze(df):
     elif price < low20:
         score -= 4
 
-    a = float(atr(df))
+    # Volume confirmation
+    vol_avg = df["volume"].rolling(20).mean().iloc[-1]
+    vol_now = df["volume"].iloc[-1]
 
+    if vol_now > vol_avg:
+        score += 2
+    else:
+        score -= 1
+
+    # =========================
+    # WEAK TREND FILTER
+    # =========================
+    if regime == "TREND" and abs(score) < 8:
+        return {
+            "direction": "NEUTRAL",
+            "score": score,
+            "price": price,
+            "trend": regime
+        }
+
+    # =========================
+    # FINAL DECISION
+    # =========================
     direction = "NEUTRAL"
 
-    if score >= 6:
+    if score >= 9:
         direction = "BUY"
-    elif score <= -6:
+    elif score <= -9:
         direction = "SELL"
 
     entry = price
     stop = tp1 = tp2 = 0
 
     if direction == "BUY":
-        stop = entry - (a * 1.5)
+        stop = entry - (atr_value * 1.6)
         risk = entry - stop
         tp1 = entry + risk * 2
         tp2 = entry + risk * 3
 
     elif direction == "SELL":
-        stop = entry + (a * 1.5)
+        stop = entry + (atr_value * 1.6)
         risk = stop - entry
         tp1 = entry - risk * 2
         tp2 = entry - risk * 3
 
     return {
-        "price": price,
-        "score": score,
+        "price": round(price, 6),
+        "score": int(score),
         "direction": direction,
-        "rsi": r,
-        "atr": a,
-        "entry": entry,
-        "stop": stop,
-        "tp1": tp1,
-        "tp2": tp2
+        "rsi": round(rsi_value, 2),
+        "atr": round(atr_value, 6),
+        "trend": regime,
+        "entry": round(entry, 6),
+        "stop": round(stop, 6),
+        "tp1": round(tp1, 6),
+        "tp2": round(tp2, 6)
     }
-
-
-# =========================
-# ANTI-SPAM SYSTEM
-# =========================
-def load_last_signal():
-    if not os.path.exists(LAST_SIGNAL_FILE):
-        return None
-
-    return open(LAST_SIGNAL_FILE, "r").read().strip()
-
-
-def save_last_signal(symbol):
-    with open(LAST_SIGNAL_FILE, "w") as f:
-        f.write(symbol)
 
 
 # =========================
@@ -204,18 +238,19 @@ def save_last_signal(symbol):
 # =========================
 def format_msg(symbol, r):
     return f"""
-🚀 {symbol}
+🚀 {symbol} (V3)
 
+Trend: {r.get('trend')}
 Direction: {r['direction']}
 Score: {r['score']}
 
-Entry: {round(r['entry'], 6)}
-Stop: {round(r['stop'], 6)}
-TP1: {round(r['tp1'], 6)}
-TP2: {round(r['tp2'], 6)}
+Entry: {r['entry']}
+Stop Loss: {r['stop']}
+TP1: {r['tp1']}
+TP2: {r['tp2']}
 
-RSI: {round(r['rsi'], 2)}
-ATR: {round(r['atr'], 6)}
+RSI: {r['rsi']}
+ATR: {r['atr']}
 """
 
 
@@ -223,7 +258,7 @@ ATR: {round(r['atr'], 6)}
 # MAIN
 # =========================
 def main():
-    print("PRO SCANNER STARTED")
+    print("V3 SCANNER STARTED")
 
     symbols = get_top_symbols()
     print("SYMBOLS:", symbols)
@@ -232,37 +267,30 @@ def main():
 
     for s in symbols:
         df = get_data(s)
-        if df is None:
+
+        if df is None or len(df) < 150:
             continue
 
         res = analyze(df)
         res["symbol"] = s
         results.append(res)
 
-    # sort best signal
+    # sort
     results.sort(key=lambda x: x["score"], reverse=True)
 
     signals = [r for r in results if r["direction"] != "NEUTRAL"]
 
     if not signals:
         print("NO SIGNAL")
-        send_telegram("📊 NO SIGNAL (PRO MODE)")
+        send_telegram("📊 V3: NO SIGNAL")
         return
 
     best = signals[0]
-
-    last = load_last_signal()
-
-    # جلوگیری از تکرار
-    if last == best["symbol"] + best["direction"]:
-        print("DUPLICATE SIGNAL BLOCKED")
-        return
 
     msg = format_msg(best["symbol"], best)
     print(msg)
 
     send_telegram(msg)
-    save_last_signal(best["symbol"] + best["direction"])
 
 
 if __name__ == "__main__":
