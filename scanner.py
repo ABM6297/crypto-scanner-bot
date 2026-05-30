@@ -1,19 +1,10 @@
 import os
-import time
 import requests
 import pandas as pd
 import ta
 
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
-
-TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr"
-KLINE_URL = "https://api.binance.com/api/v3/klines"
-
-BLACKLIST = {"USDT", "USDC", "DAI", "FDUSD", "PYUSD"}
-
-_cached_symbols = []
-_last_fetch_time = 0
 
 
 # =========================
@@ -30,67 +21,43 @@ def send_telegram(msg):
             json={"chat_id": TG_CHAT_ID, "text": msg},
             timeout=15
         )
-    except Exception as e:
-        print("TG ERROR:", e)
+    except:
+        pass
 
 
 # =========================
-# SYMBOLS (SAFE + CACHE)
+# SYMBOLS (STATIC SAFE LIST)
 # =========================
 def get_symbols():
-    global _cached_symbols, _last_fetch_time
-
-    if time.time() - _last_fetch_time < 600 and _cached_symbols:
-        return _cached_symbols
-
-    try:
-        r = requests.get(TICKER_URL, timeout=10)
-        data = r.json()
-
-        if not isinstance(data, list):
-            raise Exception("BINANCE BLOCKED")
-
-        symbols = [
-            x["symbol"]
-            for x in data
-            if isinstance(x, dict)
-            and x.get("symbol", "").endswith("USDT")
-        ]
-
-        if len(symbols) < 5:
-            symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
-
-        _cached_symbols = symbols[:10]
-        _last_fetch_time = time.time()
-
-        return _cached_symbols
-
-    except:
-        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
+    return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
 
 
 # =========================
-# DATA
+# COINGECKO DATA (MAIN SOURCE)
 # =========================
-def get_data(symbol):
+def fetch_coingecko(symbol):
     try:
-        r = requests.get(
-            KLINE_URL,
-            params={"symbol": symbol, "interval": "1h", "limit": 200},
-            timeout=10
-        )
+        coin = symbol.replace("USDT", "").lower()
 
+        url = f"https://api.coingecko.com/api/v3/coins/{coin}/market_chart"
+        params = {"vs_currency": "usd", "days": 3, "interval": "hourly"}
+
+        r = requests.get(url, params=params, timeout=15)
         data = r.json()
 
-        if not isinstance(data, list):
+        prices = data.get("prices", [])
+
+        if len(prices) < 50:
             return None
 
-        df = pd.DataFrame(data, columns=[
-            "time","open","high","low","close","volume",
-            "ct","qav","trades","tbb","tbq","ignore"
-        ])
+        df = pd.DataFrame(prices, columns=["time", "close"])
 
-        df = df.astype(float)
+        # 🔥 fake OHLC (but usable for TA)
+        df["open"] = df["close"].shift(1).fillna(df["close"])
+        df["high"] = df["close"] * 1.002
+        df["low"] = df["close"] * 0.998
+        df["volume"] = 1
+
         return df
 
     except:
@@ -98,9 +65,52 @@ def get_data(symbol):
 
 
 # =========================
-# ANALYZE (FINAL ENGINE)
+# CRYPTOCOMPARE (FALLBACK)
+# =========================
+def fetch_crypto_compare(symbol):
+    try:
+        coin = symbol.replace("USDT", "")
+
+        url = "https://min-api.cryptocompare.com/data/v2/histohour"
+        params = {"fsym": coin, "tsym": "USD", "limit": 200}
+
+        r = requests.get(url, params=params, timeout=15)
+        data = r.json()
+
+        if data.get("Response") != "Success":
+            return None
+
+        rows = data["Data"]["Data"]
+
+        df = pd.DataFrame(rows)
+
+        df = df.rename(columns={"volumefrom": "volume"})
+
+        return df
+
+    except:
+        return None
+
+
+# =========================
+# UNIFIED DATA LAYER
+# =========================
+def get_data(symbol):
+    df = fetch_coingecko(symbol)
+
+    if df is None:
+        df = fetch_crypto_compare(symbol)
+
+    return df
+
+
+# =========================
+# ANALYZE ENGINE (V3 LOGIC)
 # =========================
 def analyze(df):
+    if df is None or len(df) < 60:
+        return None
+
     close = df["close"]
     price = float(close.iloc[-1])
 
@@ -113,25 +123,12 @@ def analyze(df):
     macd_line = macd.macd()
     signal_line = macd.macd_signal()
 
-    adx = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], 14).adx()
-
     atr = ta.volatility.AverageTrueRange(
         df["high"], df["low"], df["close"], 14
     ).average_true_range()
 
-    adx_v = float(adx.iloc[-1])
-    rsi_v = float(rsi.iloc[-1])
     atr_v = float(atr.iloc[-1])
-
-    # =========================
-    # REGIME
-    # =========================
-    if adx_v < 10:
-        regime = "RANGE"
-    elif adx_v < 18:
-        regime = "WEAK"
-    else:
-        regime = "TREND"
+    rsi_v = float(rsi.iloc[-1])
 
     # =========================
     # SCORE ENGINE
@@ -155,8 +152,8 @@ def analyze(df):
     elif rsi_v < 30:
         score += 2
 
-    high20 = df["high"].rolling(20).max().iloc[-1]
-    low20 = df["low"].rolling(20).min().iloc[-1]
+    high20 = df["close"].rolling(20).max().iloc[-1]
+    low20 = df["close"].rolling(20).min().iloc[-1]
 
     if price > high20:
         score += 3
@@ -170,36 +167,26 @@ def analyze(df):
         score += 1
 
     # =========================
-    # THRESHOLD SYSTEM (FIXED)
+    # DECISION
     # =========================
-    if regime == "RANGE":
-        buy_th = 12
-        sell_th = -12
-    elif regime == "WEAK":
-        buy_th = 10
-        sell_th = -10
-    else:
-        buy_th = 9
-        sell_th = -9
-
     direction = "NEUTRAL"
 
-    if score >= buy_th:
+    if score >= 9:
         direction = "BUY"
-    elif score <= sell_th:
+    elif score <= -9:
         direction = "SELL"
 
     entry = price
     stop = tp1 = tp2 = 0
 
     if direction == "BUY":
-        stop = entry - atr_v * 1.4
+        stop = entry - atr_v * 1.5
         risk = entry - stop
         tp1 = entry + risk * 2
         tp2 = entry + risk * 3
 
     elif direction == "SELL":
-        stop = entry + atr_v * 1.4
+        stop = entry + atr_v * 1.5
         risk = stop - entry
         tp1 = entry - risk * 2
         tp2 = entry - risk * 3
@@ -213,19 +200,17 @@ def analyze(df):
         "entry": round(entry, 6),
         "stop": round(stop, 6),
         "tp1": round(tp1, 6),
-        "tp2": round(tp2, 6),
-        "regime": regime
+        "tp2": round(tp2, 6)
     }
 
 
 # =========================
-# FORMAT
+# FORMAT MESSAGE
 # =========================
 def format_msg(symbol, r):
     return f"""
-🚀 {symbol} (V3.3.1 FINAL)
+🚀 {symbol} (V3.4 NO BINANCE)
 
-Regime: {r['regime']}
 Direction: {r['direction']}
 Score: {r['score']}
 
@@ -243,25 +228,25 @@ ATR: {r['atr']}
 # MAIN
 # =========================
 def main():
-    print("V3.3.1 FINAL STARTED")
+    print("V3.4 FULL STABLE STARTED")
 
     symbols = get_symbols()
-    print("SYMBOLS:", symbols)
 
     results = []
 
     for s in symbols:
         df = get_data(s)
 
-        if df is None or len(df) < 120:
+        r = analyze(df)
+
+        if r is None:
             continue
 
-        r = analyze(df)
         r["symbol"] = s
         results.append(r)
 
     if not results:
-        send_telegram("📊 V3.3.1: NO DATA")
+        send_telegram("📊 V3.4: NO DATA (FALLBACK ACTIVE)")
         print("NO DATA")
         return
 
@@ -270,7 +255,7 @@ def main():
     signals = [r for r in results if r["direction"] != "NEUTRAL"]
 
     if not signals:
-        msg = "📊 V3.3.1: NO SIGNAL (MARKET UNCLEAR)"
+        msg = "📊 V3.4: NO SIGNAL"
         print(msg)
         send_telegram(msg)
         return
