@@ -345,9 +345,9 @@ def main():
     ATR: {r['atr']}
     """
 
-           print(msg)
+        print(msg)
 
-           send_telegram(msg)
+        send_telegram(msg)
 =========================
 {r['symbol']}
 
