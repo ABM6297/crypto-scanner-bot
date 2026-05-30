@@ -72,7 +72,7 @@ def get_data(symbol):
         url = (
             "https://min-api.cryptocompare.com/data/v2/histohour"
             f"?fsym={symbol}"
-            "&tsym=USDT"
+            "&tsym=USD"
             "&limit=200"
         )
 
@@ -205,10 +205,10 @@ def analyze(df):
 
     direction = "NEUTRAL"
 
-    if score >= 5:
+    if score >= 3:
         direction = "BUY"
 
-    elif score <= -5:
+    elif score <= -3:
         direction = "SELL"
 
     entry = price
