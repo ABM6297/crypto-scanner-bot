@@ -18,8 +18,11 @@ def get_top_coins():
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
 
     headers = {
-        "X-CMC_PRO_API_KEY": CMC_API_KEY
+        "Accepts": "application/json",
+        "X-CMC_PRO_API_KEY": str(CMC_API_KEY).strip()
     }
+
+    print("HEADER KEY LENGTH =", len(str(CMC_API_KEY)))
 
     params = {
         "start": 1,
