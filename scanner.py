@@ -151,9 +151,19 @@ def analyze(df, symbol):
         score -= 3
 
     if current_volume > avg_volume * 1.3:
-        score += 1
+    score += 1
 
-    direction = None
+print(
+    f"{symbol} | "
+    f"SCORE={score} | "
+    f"RSI={round(rsi,2)} | "
+    f"EMA20={round(ema20,4)} | "
+    f"EMA50={round(ema50,4)} | "
+    f"MACD={round(macd_line,4)} | "
+    f"SIGNAL={round(macd_signal,4)}"
+)
+
+direction = None
 
     if score >= 5:
         direction = "BUY"
