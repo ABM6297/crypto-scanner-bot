@@ -31,9 +31,6 @@ def get_top_coins():
     }
 
     r = requests.get(
-        print("REQUEST HEADERS:", headers)
-        print("STATUS:", r.status_code)
-        print("BODY:", r.text[:500])
         url,
         timeout=10,
         headers={
@@ -41,6 +38,9 @@ def get_top_coins():
         }
     )
 
+    print("REQUEST HEADERS:", headers)
+    print("STATUS:", r.status_code)
+    print("BODY:", r.text[:500])
     print("STATUS:", r.status_code)
     print("RESPONSE:", r.text[:300])
 
