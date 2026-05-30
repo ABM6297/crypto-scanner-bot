@@ -201,7 +201,7 @@ def analyze(df, symbol):
 
 
 def main():
-
+    print("CMC_API_KEY =", repr(CMC_API_KEY))
     print("SCANNER STARTED")
 
     manual_mode = len(sys.argv) > 1 and sys.argv[1] == "manual"
