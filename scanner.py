@@ -13,33 +13,72 @@ CMC_API_KEY = os.getenv("CMC_API_KEY")
 TOP_LIMIT = 80
 
 
-def get_top_coins():
+def get_data(symbol):
 
-    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest"
+    try:
 
-    headers = {
-        "Accepts": "application/json",
-        "X-CMC_PRO_API_KEY": CMC_API_KEY
-    }
+        symbol = symbol.replace("USDT", "")
 
-    params = {
-        "start": 1,
-        "limit": TOP_LIMIT,
-        "convert": "USD"
-    }
+        url = (
+            "https://api.bybit.com/v5/market/kline"
+            f"?category=linear"
+            f"&symbol={symbol}USDT"
+            f"&interval=15"
+            f"&limit=150"
+        )
 
-    r = requests.get(
-        url,
-        headers=headers,
-        params=params,
-        timeout=20
-    )
+        r = requests.get(
+            url,
+            timeout=15,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
+        )
 
-    print("STATUS:", r.status_code)
-    print("BODY:", r.text[:300])
+        print(f"{symbol} STATUS =", r.status_code)
 
-    data = r.json()
+        try:
+            data = r.json()
+        except Exception:
+            print(f"{symbol} RAW RESPONSE:")
+            print(r.text[:500])
+            return None
 
+        if data.get("retCode") != 0:
+            print(f"{symbol} BYBIT ERROR:", data)
+            return None
+
+        rows = data["result"]["list"]
+
+        if len(rows) < 100:
+            return None
+
+        df = pd.DataFrame(rows)
+
+        df = df.iloc[:, :6]
+
+        df.columns = [
+            "time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+        ]
+
+        for c in ["open", "high", "low", "close", "volume"]:
+            df[c] = df[c].astype(float)
+
+        df = df.iloc[::-1].reset_index(drop=True)
+
+        return df
+
+    except Exception as e:
+
+        print(symbol, "ERROR:", e)
+
+        return None
+        
     if "data" not in data:
         print("CMC ERROR:", data)
         return []
