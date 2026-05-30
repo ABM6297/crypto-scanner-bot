@@ -19,10 +19,8 @@ def get_top_coins():
 
     headers = {
         "Accepts": "application/json",
-        "X-CMC_PRO_API_KEY": str(CMC_API_KEY).strip()
+        "X-CMC_PRO_API_KEY": CMC_API_KEY
     }
-
-    print("HEADER KEY LENGTH =", len(str(CMC_API_KEY)))
 
     params = {
         "start": 1,
@@ -32,19 +30,40 @@ def get_top_coins():
 
     r = requests.get(
         url,
-        timeout=10,
-        headers={
-            "User-Agent": "Mozilla/5.0"
-        }
+        headers=headers,
+        params=params,
+        timeout=20
     )
 
-    print("REQUEST HEADERS:", headers)
     print("STATUS:", r.status_code)
-    print("BODY:", r.text[:500])
-    print("STATUS:", r.status_code)
-    print("RESPONSE:", r.text[:300])
+    print("BODY:", r.text[:300])
 
     data = r.json()
+
+    if "data" not in data:
+        print("CMC ERROR:", data)
+        return []
+
+    coins = []
+
+    for c in data["data"]:
+
+        symbol = c["symbol"]
+
+        if symbol.isalpha():
+
+            if symbol not in [
+                "USDT",
+                "USDC",
+                "DAI",
+                "FDUSD",
+                "PYUSD",
+                "USDE",
+                "USDD"
+            ]:
+                coins.append(symbol + "USDT")
+
+    return coins
 
     if "data" not in data:
         print("CMC ERROR:", data)
