@@ -27,7 +27,17 @@ def get_top_coins():
         "convert": "USD"
     }
 
-    r = requests.get(url, headers=headers, params=params)
+    r = requests.get(
+        url,
+        timeout=10,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        }
+    )
+
+    print("STATUS:", r.status_code)
+    print("RESPONSE:", r.text[:300])
+
     data = r.json()
 
     if "data" not in data:
