@@ -1,26 +1,12 @@
 import requests
 
 url = (
-    "https://min-api.cryptocompare.com/data/v2/histominute"
+    "https://min-api.cryptocompare.com/data/v2/histohour"
     "?fsym=BTC"
     "&tsym=USDT"
-    "&limit=5"
+    "&limit=3"
 )
 
 r = requests.get(url, timeout=20)
 
-print("STATUS:", r.status_code)
-
-try:
-    data = r.json()
-
-    print(data["Response"])
-
-    print(
-        "CANDLES:",
-        len(data["Data"]["Data"])
-    )
-
-except Exception as e:
-    print(e)
-    print(r.text[:500])
+print(r.json())
