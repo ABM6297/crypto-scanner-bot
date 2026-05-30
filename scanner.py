@@ -104,6 +104,8 @@ def analyze(df, symbol):
 
     price = close.iloc[-1]
 
+    raise Exception("TEST123")
+
     rsi = ta.momentum.RSIIndicator(
         close,
         window=14
